@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ledoent/.github/main/profile/logo-banner.svg" alt="Ledo Web" width="600" />
+  <img src="https://raw.githubusercontent.com/ledoent/.github/main/profile/logo-banner.png" alt="Ledo Web" width="600" />
 </p>
 
 <h3 align="center">We build the systems your business runs on.</h3>
