@@ -1,0 +1,69 @@
+name: fork-sync-and-digest
+
+# Daily: sync each tracked fork's base branch with its upstream parent, then
+# email a digest summarising what synced, what failed, and what [MIG] PRs
+# landed on upstream in the last 24 hours.
+#
+# Tracked fork list lives in .github/forks.yml (so adding a new fork doesn't
+# require touching this workflow). The python script .github/scripts/fork_sync_digest.py
+# does the heavy lifting.
+#
+# Secrets required (org-level or repo-level on ledoent/.github):
+#   LEDOENT_FORK_SYNC_TOKEN  — fine-grained PAT scoped to ledoent/*,
+#                              Contents:write + Metadata:read + public_repo
+#                              (for searching OCA upstream PRs).
+#   SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TO
+#                            — email delivery. Gmail works with an app
+#                              password; smtp.gmail.com / 587 / STARTTLS.
+
+on:
+  schedule:
+    # 13:00 UTC = 09:00 ET (DST) / 08:00 ET (standard). Once daily.
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+    # Manual trigger lets us test before the first cron fires.
+
+permissions:
+  contents: read
+
+jobs:
+  sync-and-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync forks and assemble digest
+        env:
+          GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
+        run: python3 .github/scripts/fork_sync_digest.py
+
+      - name: Read digest subject
+        id: subject
+        run: echo "value=$(cat digest.subject)" >> "$GITHUB_OUTPUT"
+
+      - name: Send digest email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: 587
+          secure: false
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.subject.outputs.value }}
+          to: ${{ secrets.SMTP_TO }}
+          from: "Ledoent CI <${{ secrets.SMTP_USERNAME }}>"
+          html_body: file://digest.html
+          ignore_cert: false
+
+      - name: Upload digest artifact (kept 7 days for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ github.run_id }}
+          path: |
+            digest.html
+            digest.subject
+            digest.exit
+          retention-days: 7

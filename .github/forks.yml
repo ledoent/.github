@@ -1,0 +1,36 @@
+# Forks the org-level digest workflow keeps in sync with their upstream parent
+# and reports on. Edit this file (not the workflow YAML) when adding/removing
+# tracked forks. Each entry:
+#
+#   repo:    org/name on GitHub (must be a fork)
+#   base:    branch on the fork that mirrors upstream's release branch
+#   upstream_org: parent org (for the MIG-digest query — set null to skip)
+#   upstream_track: branch on upstream to watch for [MIG]/release activity
+#
+# The base branch is what gets auto-synced via /merge-upstream. Feature
+# branches on the fork are NEVER touched by this workflow.
+
+forks:
+  # === OCA forks — primary 18.0 tracking ===
+  - {repo: ledoent/web,                          base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/sale-workflow,                base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/calendar,                     base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/mis-builder,                  base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/account-financial-reporting,  base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/account-financial-tools,      base: "19.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/spreadsheet,                  base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/dms,                          base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/bank-statement-import,        base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/connector-telephony,          base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/e-commerce,                   base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/social,                       base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/knowledge,                    base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/geospatial,                   base: "19.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/OpenUpgrade,                  base: "ledoent", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/server-tools,                 base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/ddmrp,                        base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+  - {repo: ledoent/report-print-send,            base: "18.0", upstream_org: OCA, upstream_track: "19.0"}
+
+  # === non-OCA forks we maintain meaningful branches on ===
+  - {repo: ledoent/odoo,                base: "18.0",     upstream_org: null, upstream_track: null}
+  - {repo: ledoent/odoo-cloud-platform, base: "19.0",     upstream_org: null, upstream_track: null}
