@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+digest.html
+digest.subject
+digest.exit

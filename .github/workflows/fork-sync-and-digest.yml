@@ -1,0 +1,96 @@
+name: fork-sync-and-digest
+
+# Daily org-level workflow:
+#
+#   1. Sync each tracked fork's listed branches (typically 18.0 + 19.0)
+#      with their upstream parent via /repos/.../merge-upstream — the
+#      same endpoint behind the green "Sync fork" button.
+#   2. Distribute the forward-port workflow template to every fork that
+#      opted in (forks.yml: install_forward_port: true) so labelled PRs
+#      cherry-pick across release branches.
+#   3. Query upstream OCA repos for `[MIG]` PRs merged in the last 24h.
+#   4. Email an HTML digest summarising all of the above. Subject line
+#      tags failure count + MIG count so the inbox stays scannable.
+#
+# Tracked fork list lives in .github/forks.yml so adding/removing a fork
+# doesn't require touching this workflow or the scripts.
+#
+# Secrets required (org-level or repo-level on ledoent/.github):
+#   LEDOENT_FORK_SYNC_TOKEN  PAT scoped to ledoent/*, with
+#                              Contents:write (sync + distributor),
+#                              Metadata:read, public_repo (upstream search)
+#   SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TO, SMTP_FROM
+#                              email delivery. Recommended: AWS SES (the
+#                              ledoweb.com domain is already verified there).
+#                              SMTP_USERNAME = SES SMTP-credential AKID,
+#                              SMTP_PASSWORD = derived SMTP password
+#                              (NOT the IAM secret key — derive via the
+#                              algorithm in docs.aws.amazon.com/ses/latest/dg/
+#                              smtp-credentials.html#smtp-credentials-convert).
+#                              SMTP_FROM = full From: header, e.g.
+#                              "Ledoent CI <ci@ledoweb.com>".
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 13:00 UTC = 09:00 ET (DST) / 08:00 ET (standard)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-and-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync forks + assemble digest
+        env:
+          GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
+        run: python3 .github/scripts/fork_sync_digest.py
+
+      - name: Distribute forward-port workflow to opted-in forks
+        env:
+          GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
+        # Don't fail the whole run if one fork's distributor push fails —
+        # the failure shows up in the digest's "Sync failures" section
+        # tomorrow if anything's actually broken.
+        continue-on-error: true
+        run: python3 .github/scripts/distribute_forward_port.py
+
+      - name: Read digest subject
+        id: subject
+        run: echo "value=$(cat digest.subject)" >> "$GITHUB_OUTPUT"
+
+      - name: Send digest email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: 587
+          secure: false
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.subject.outputs.value }}
+          to: ${{ secrets.SMTP_TO }}
+          # SMTP_USERNAME is the SES SMTP credential ID (an AKID), not an
+          # email — so the From: header has to come from a separate secret
+          # that names a verified sender on the SES-verified `ledoweb.com`
+          # domain.
+          from: ${{ secrets.SMTP_FROM }}
+          html_body: file://digest.html
+          ignore_cert: false
+
+      - name: Upload digest artifact (kept 7 days for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ github.run_id }}
+          path: |
+            digest.html
+            digest.subject
+            digest.exit
+            forks-parsed.json
+            forward-port-distribution.json
+          retention-days: 7
