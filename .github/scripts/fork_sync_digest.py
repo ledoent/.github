@@ -3,15 +3,17 @@
 
 Two responsibilities:
   1. For each fork in .github/forks.yml, POST /repos/{repo}/merge-upstream
-     so the base branch tracks upstream. Failures collected into the digest.
+     for every branch listed in `branches:`. Failures collected into the
+     digest. Branches that don't exist on the fork are skipped quietly.
   2. For each fork whose `upstream_org` is set, query upstream for `[MIG]`
-     PRs closed in the last 24h on the configured track branch — these are
-     the "interesting developments" the human wants to know about.
+     PRs closed in the last 24h on the configured `upstream_track`.
 
-Outputs `digest.html` (plus `digest.subject` and `digest.exit`) in CWD,
-which the workflow consumes verbatim.
+Outputs `digest.html`, `digest.subject`, `digest.exit` in CWD which the
+workflow consumes verbatim. Also writes `forks-parsed.json` so the
+forward-port-distributor workflow can read the same fork list without
+re-parsing the YAML.
 
-Auth: `GH_TOKEN` env var, a PAT scoped to ledoent/* with Contents:write
+Auth: `GH_TOKEN` env var — a PAT scoped to ledoent/* with Contents:write
 (for merge-upstream) and public_repo (for upstream PR listing).
 """
 
@@ -20,6 +22,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -27,18 +30,13 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Use stdlib for YAML to avoid a pip step. forks.yml stays narrowly
-# enough formatted that this hand-rolled parser is sufficient.
-import re
-
-
 GH = "https://api.github.com"
 TOKEN = os.environ["GH_TOKEN"]
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "ledoent-fork-digest/1.0",
+    "User-Agent": "ledoent-fork-digest/2.0",
 }
 
 
@@ -61,40 +59,65 @@ def gh(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
 
 
 def load_forks() -> list[dict]:
+    """Parse .github/forks.yml — block-style entries only.
+
+    The format is restricted enough that we don't pull in PyYAML; one
+    `- repo:` line per entry, followed by indented `key: value` lines
+    until the next entry or a blank line. Lists are written as
+    `[item, item]`. Comments stripped.
+    """
     text = Path(".github/forks.yml").read_text()
     out: list[dict] = []
-    for line in text.splitlines():
-        line = line.split("#", 1)[0].rstrip()
-        if not line.lstrip().startswith("- {"):
+    cur: dict | None = None
+
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            if cur:
+                out.append(cur)
+                cur = None
             continue
-        inner = line.strip().lstrip("- {").rstrip("}")
-        entry: dict = {}
-        for pair in re.split(r",\s+(?=[a-z_]+:)", inner):
-            k, _, v = pair.partition(":")
-            k = k.strip()
-            v = v.strip().strip('"')
-            if v == "null":
-                v = None
-            entry[k] = v
-        out.append(entry)
+
+        m_new = re.match(r"^  - repo:\s*(.+?)\s*$", line)
+        if m_new:
+            if cur:
+                out.append(cur)
+            cur = {"repo": m_new.group(1).strip('"')}
+            continue
+
+        m_kv = re.match(r"^    ([a-z_]+):\s*(.+?)\s*$", line)
+        if m_kv and cur is not None:
+            k, v = m_kv.group(1), m_kv.group(2)
+            if v.startswith("[") and v.endswith("]"):
+                # ["18.0", "19.0"] → list of strings
+                cur[k] = [s.strip().strip('"') for s in v[1:-1].split(",") if s.strip()]
+            elif v == "null":
+                cur[k] = None
+            elif v in ("true", "false"):
+                cur[k] = v == "true"
+            else:
+                cur[k] = v.strip('"')
+
+    if cur:
+        out.append(cur)
     return out
 
 
-def sync_one(repo: str, base: str) -> dict:
-    status, body = gh("POST", f"/repos/{repo}/merge-upstream", {"branch": base})
+def sync_branch(repo: str, branch: str) -> dict:
+    status, body = gh("POST", f"/repos/{repo}/merge-upstream", {"branch": branch})
     return {
         "repo": repo,
-        "base": base,
+        "branch": branch,
         "status": status,
         "message": body.get("message", ""),
         "merge_type": body.get("merge_type"),
-        "base_branch": body.get("base_branch"),
+        # 422 with "branch does not exist" is the no-op we expect on
+        # forks that haven't cut a 19.0 yet — treat it as "skipped".
+        "skipped": status == 422 and "does not exist" in body.get("message", "").lower(),
     }
 
 
 def list_recent_mig_prs(org: str, repo_name: str, track: str, since: datetime) -> list[dict]:
-    """Closed-and-merged PRs in the last 24h with [MIG] in the title."""
-    # Use search API — it lets us filter by title + merged-in-window in one call.
     q = (
         f"repo:{org}/{repo_name} is:pr is:merged base:{track} "
         f"merged:>={since.strftime('%Y-%m-%dT%H:%M:%SZ')} "
@@ -117,22 +140,25 @@ def list_recent_mig_prs(org: str, repo_name: str, track: str, since: datetime) -
 
 def render(sync_results: list[dict], mig_buckets: dict[str, list[dict]]) -> tuple[str, str]:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    fail = [r for r in sync_results if r["status"] >= 400 or r.get("merge_type") == "none" and r["status"] >= 400]
+    fail = [r for r in sync_results if r["status"] >= 400 and not r["skipped"]]
     updated = [r for r in sync_results if r.get("merge_type") in ("fast-forward", "merge")]
     nochange = [r for r in sync_results if r.get("merge_type") == "none" and r["status"] < 400]
+    skipped = [r for r in sync_results if r["skipped"]]
 
     lines: list[str] = [
-        "<html><body style=\"font-family: -apple-system, sans-serif; max-width: 800px;\">",
+        '<html><body style="font-family: -apple-system, sans-serif; max-width: 800px;">',
         f"<h2>Ledoent fork digest — {today}</h2>",
         f"<p><b>Sync:</b> {len(updated)} updated · {len(nochange)} already current · "
-        f"<span style=\"color:{'#c00' if fail else '#0a0'}\">{len(fail)} failed</span></p>",
+        f"{len(skipped)} skipped (branch n/a) · "
+        f'<span style="color:{"#c00" if fail else "#0a0"}">{len(fail)} failed</span></p>',
     ]
 
     if fail:
-        lines.append("<h3 style=\"color:#c00\">⚠️ Sync failures</h3><ul>")
+        lines.append('<h3 style="color:#c00">⚠️ Sync failures</h3><ul>')
         for r in fail:
             lines.append(
-                f"<li><code>{html.escape(r['repo'])}</code> ({html.escape(r['base'])}): "
+                f"<li><code>{html.escape(r['repo'])}</code> "
+                f"({html.escape(r['branch'])}): "
                 f"HTTP {r['status']} — {html.escape(r['message'])}</li>"
             )
         lines.append("</ul>")
@@ -141,7 +167,8 @@ def render(sync_results: list[dict], mig_buckets: dict[str, list[dict]]) -> tupl
         lines.append("<h3>Synced</h3><ul>")
         for r in updated:
             lines.append(
-                f"<li><code>{html.escape(r['repo'])}</code> ({html.escape(r['base'])}): "
+                f"<li><code>{html.escape(r['repo'])}</code> "
+                f"({html.escape(r['branch'])}): "
                 f"{html.escape(r.get('merge_type') or '')}</li>"
             )
         lines.append("</ul>")
@@ -155,7 +182,7 @@ def render(sync_results: list[dict], mig_buckets: dict[str, list[dict]]) -> tupl
             lines.append(f"<h4>{html.escape(repo)}</h4><ul>")
             for it in items:
                 lines.append(
-                    f"<li><a href=\"{html.escape(it['url'])}\">#{it['number']}</a> "
+                    f'<li><a href="{html.escape(it["url"])}">#{it["number"]}</a> '
                     f"<b>{html.escape(it['title'])}</b> — "
                     f"@{html.escape(it.get('user') or '')} "
                     f"<small>{html.escape(it.get('merged_at') or '')}</small></li>"
@@ -164,9 +191,11 @@ def render(sync_results: list[dict], mig_buckets: dict[str, list[dict]]) -> tupl
     else:
         lines.append("<p><i>No upstream [MIG] PRs merged in the last 24h.</i></p>")
 
-    lines.append("<hr><p style=\"color:#888;font-size:11px\">"
-                 "Generated by ledoent/.github/.github/workflows/fork-sync-and-digest.yml — "
-                 "edit <code>.github/forks.yml</code> to add/remove tracked forks.</p>")
+    lines.append(
+        '<hr><p style="color:#888;font-size:11px">'
+        "Generated by ledoent/.github/.github/workflows/fork-sync-and-digest.yml — "
+        "edit <code>.github/forks.yml</code> to add/remove tracked forks.</p>"
+    )
     lines.append("</body></html>")
 
     subject_parts = [f"Ledoent digest {today}"]
@@ -183,20 +212,28 @@ def main() -> int:
     forks = load_forks()
     print(f"Loaded {len(forks)} forks from .github/forks.yml", file=sys.stderr)
 
+    # Stash the parsed list for downstream workflows (forward-port distributor).
+    Path("forks-parsed.json").write_text(json.dumps(forks, indent=2))
+
     sync_results: list[dict] = []
     for f in forks:
-        res = sync_one(f["repo"], f["base"])
-        sync_results.append(res)
-        print(f"  sync {res['repo']}@{res['base']} -> {res['status']} {res.get('merge_type','-')}",
-              file=sys.stderr)
+        for branch in f.get("branches", []):
+            res = sync_branch(f["repo"], branch)
+            sync_results.append(res)
+            tag = "SKIP" if res["skipped"] else (res.get("merge_type") or str(res["status"]))
+            print(f"  {res['repo']}@{branch:>10}  -> {tag}", file=sys.stderr)
 
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     mig_buckets: dict[str, list[dict]] = {}
+    seen_upstream: set[tuple[str, str]] = set()
     for f in forks:
         if not f.get("upstream_org") or not f.get("upstream_track"):
             continue
-        # repo name without the org prefix
         repo_name = f["repo"].split("/", 1)[1]
+        key = (f["upstream_org"], repo_name)
+        if key in seen_upstream:
+            continue
+        seen_upstream.add(key)
         prs = list_recent_mig_prs(f["upstream_org"], repo_name, f["upstream_track"], since)
         if prs:
             mig_buckets[f"{f['upstream_org']}/{repo_name}@{f['upstream_track']}"] = prs
@@ -205,11 +242,8 @@ def main() -> int:
     Path("digest.html").write_text(body_html)
     Path("digest.subject").write_text(subject)
 
-    fail_count = sum(1 for r in sync_results if r["status"] >= 400)
+    fail_count = sum(1 for r in sync_results if r["status"] >= 400 and not r["skipped"])
     Path("digest.exit").write_text(str(fail_count))
-    # We don't propagate fail_count as a non-zero exit: the email step
-    # should always run and report failures. The workflow can branch on
-    # digest.exit if it wants a separate alert path later.
     return 0
 
 

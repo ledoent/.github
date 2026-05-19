@@ -1,27 +1,32 @@
 name: fork-sync-and-digest
 
-# Daily: sync each tracked fork's base branch with its upstream parent, then
-# email a digest summarising what synced, what failed, and what [MIG] PRs
-# landed on upstream in the last 24 hours.
+# Daily org-level workflow:
 #
-# Tracked fork list lives in .github/forks.yml (so adding a new fork doesn't
-# require touching this workflow). The python script .github/scripts/fork_sync_digest.py
-# does the heavy lifting.
+#   1. Sync each tracked fork's listed branches (typically 18.0 + 19.0)
+#      with their upstream parent via /repos/.../merge-upstream — the
+#      same endpoint behind the green "Sync fork" button.
+#   2. Distribute the forward-port workflow template to every fork that
+#      opted in (forks.yml: install_forward_port: true) so labelled PRs
+#      cherry-pick across release branches.
+#   3. Query upstream OCA repos for `[MIG]` PRs merged in the last 24h.
+#   4. Email an HTML digest summarising all of the above. Subject line
+#      tags failure count + MIG count so the inbox stays scannable.
+#
+# Tracked fork list lives in .github/forks.yml so adding/removing a fork
+# doesn't require touching this workflow or the scripts.
 #
 # Secrets required (org-level or repo-level on ledoent/.github):
-#   LEDOENT_FORK_SYNC_TOKEN  — fine-grained PAT scoped to ledoent/*,
-#                              Contents:write + Metadata:read + public_repo
-#                              (for searching OCA upstream PRs).
+#   LEDOENT_FORK_SYNC_TOKEN  PAT scoped to ledoent/*, with
+#                              Contents:write (sync + distributor),
+#                              Metadata:read, public_repo (upstream search)
 #   SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TO
-#                            — email delivery. Gmail works with an app
-#                              password; smtp.gmail.com / 587 / STARTTLS.
+#                              email delivery — Gmail w/ app password works
+#                              (smtp.gmail.com, 587, STARTTLS)
 
 on:
   schedule:
-    # 13:00 UTC = 09:00 ET (DST) / 08:00 ET (standard). Once daily.
-    - cron: "0 13 * * *"
+    - cron: "0 13 * * *"   # 13:00 UTC = 09:00 ET (DST) / 08:00 ET (standard)
   workflow_dispatch:
-    # Manual trigger lets us test before the first cron fires.
 
 permissions:
   contents: read
@@ -29,15 +34,24 @@ permissions:
 jobs:
   sync-and-digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync forks and assemble digest
+      - name: Sync forks + assemble digest
         env:
           GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
         run: python3 .github/scripts/fork_sync_digest.py
+
+      - name: Distribute forward-port workflow to opted-in forks
+        env:
+          GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
+        # Don't fail the whole run if one fork's distributor push fails —
+        # the failure shows up in the digest's "Sync failures" section
+        # tomorrow if anything's actually broken.
+        continue-on-error: true
+        run: python3 .github/scripts/distribute_forward_port.py
 
       - name: Read digest subject
         id: subject
@@ -66,4 +80,6 @@ jobs:
             digest.html
             digest.subject
             digest.exit
+            forks-parsed.json
+            forward-port-distribution.json
           retention-days: 7
