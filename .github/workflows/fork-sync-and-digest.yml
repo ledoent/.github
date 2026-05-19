@@ -19,9 +19,16 @@ name: fork-sync-and-digest
 #   LEDOENT_FORK_SYNC_TOKEN  PAT scoped to ledoent/*, with
 #                              Contents:write (sync + distributor),
 #                              Metadata:read, public_repo (upstream search)
-#   SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TO
-#                              email delivery — Gmail w/ app password works
-#                              (smtp.gmail.com, 587, STARTTLS)
+#   SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TO, SMTP_FROM
+#                              email delivery. Recommended: AWS SES (the
+#                              ledoweb.com domain is already verified there).
+#                              SMTP_USERNAME = SES SMTP-credential AKID,
+#                              SMTP_PASSWORD = derived SMTP password
+#                              (NOT the IAM secret key — derive via the
+#                              algorithm in docs.aws.amazon.com/ses/latest/dg/
+#                              smtp-credentials.html#smtp-credentials-convert).
+#                              SMTP_FROM = full From: header, e.g.
+#                              "Ledoent CI <ci@ledoweb.com>".
 
 on:
   schedule:
@@ -67,7 +74,11 @@ jobs:
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: ${{ steps.subject.outputs.value }}
           to: ${{ secrets.SMTP_TO }}
-          from: "Ledoent CI <${{ secrets.SMTP_USERNAME }}>"
+          # SMTP_USERNAME is the SES SMTP credential ID (an AKID), not an
+          # email — so the From: header has to come from a separate secret
+          # that names a verified sender on the SES-verified `ledoweb.com`
+          # domain.
+          from: ${{ secrets.SMTP_FROM }}
           html_body: file://digest.html
           ignore_cert: false
 

@@ -59,4 +59,10 @@ Set at the org or `ledoent/.github` repo level:
   - `Contents: write` on `ledoent/*`
   - `Metadata: read`
   - `public_repo` (for searching OCA upstream PRs)
-- `SMTP_SERVER` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_TO`
+- `SMTP_SERVER` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_TO` / `SMTP_FROM`
+  - `SMTP_USERNAME`: SES SMTP-credential AKID
+  - `SMTP_PASSWORD`: derived from the IAM secret via SES's signing
+    algorithm (NOT the raw IAM secret)
+  - `SMTP_FROM`: full From: header, e.g. `Ledoent CI <ci@ledoweb.com>`
+    on a domain SES has verified (`ledoweb.com` is already verified
+    in account 058264328562, region us-east-1)
