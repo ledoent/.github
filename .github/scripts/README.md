@@ -56,8 +56,12 @@ Edit `.github/forks.yml`. Each entry:
 Set at the org or `ledoent/.github` repo level:
 
 - `LEDOENT_FORK_SYNC_TOKEN` — fine-grained PAT, scopes:
-  - `Contents: write` on `ledoent/*`
-  - `Metadata: read`
+  - `Contents: Read and write` on `ledoent/*` (merge-upstream + file writes)
+  - `Workflows: Read and write` on `ledoent/*` — **required** because the
+    distributor writes `.github/workflows/forward-port.yml`; without this
+    every distributor PUT returns `403 Resource not accessible by personal
+    access token`
+  - `Metadata: Read-only` (auto-selected when picking a repo)
   - `public_repo` (for searching OCA upstream PRs)
 - `SMTP_SERVER` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_TO` / `SMTP_FROM`
   - `SMTP_USERNAME`: SES SMTP-credential AKID
