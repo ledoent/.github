@@ -105,15 +105,23 @@ def load_forks() -> list[dict]:
 
 def sync_branch(repo: str, branch: str) -> dict:
     status, body = gh("POST", f"/repos/{repo}/merge-upstream", {"branch": branch})
+    msg = body.get("message", "")
+    # "Branch n/a" responses we expect on forks that haven't cut a 20.0
+    # (or any future release) yet. Two API shapes for the same condition:
+    #   422 + "does not exist" — branch isn't on the fork at all
+    #   404 + "Branch not found" — branch isn't on the upstream either
+    # Both are "skipped", not "failed".
+    skipped = (
+        (status == 422 and "does not exist" in msg.lower())
+        or (status == 404 and "branch not found" in msg.lower())
+    )
     return {
         "repo": repo,
         "branch": branch,
         "status": status,
-        "message": body.get("message", ""),
+        "message": msg,
         "merge_type": body.get("merge_type"),
-        # 422 with "branch does not exist" is the no-op we expect on
-        # forks that haven't cut a 19.0 yet — treat it as "skipped".
-        "skipped": status == 422 and "does not exist" in body.get("message", "").lower(),
+        "skipped": skipped,
     }
 
 
