@@ -48,7 +48,11 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      # Third-party Actions pinned to commit SHAs so a tag retag (or a
+      # compromised maintainer) can't silently swap the code our PAT
+      # runs against. Comment shows the human-readable version each SHA
+      # currently maps to; bump both when reviewing for updates.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Sync forks + assemble digest
         env:
@@ -69,7 +73,7 @@ jobs:
         run: echo "value=$(cat digest.subject)" >> "$GITHUB_OUTPUT"
 
       - name: Send digest email
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7 # v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: 587
@@ -88,7 +92,7 @@ jobs:
 
       - name: Upload digest artifact (kept 7 days for debugging)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ github.run_id }}
           path: |
