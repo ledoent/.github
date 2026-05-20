@@ -3,3 +3,7 @@ __pycache__/
 digest.html
 digest.subject
 digest.exit
+sync-results.json
+mig-buckets.json
+forks-parsed.json
+forward-port-distribution.json

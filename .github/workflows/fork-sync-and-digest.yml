@@ -62,7 +62,11 @@ jobs:
       # currently maps to; bump both when reviewing for updates.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Sync forks + assemble digest
+      # The pipeline is split into collect → distribute → render so the
+      # forward-port distributor's outcomes land in the email body, not
+      # just in the artifact tarball where nobody looks.
+
+      - name: Collect sync + MIG data
         env:
           GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
         run: python3 .github/scripts/fork_sync_digest.py
@@ -70,11 +74,16 @@ jobs:
       - name: Distribute forward-port workflow to opted-in forks
         env:
           GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
-        # Don't fail the whole run if one fork's distributor push fails —
-        # the failure shows up in the digest's "Sync failures" section
-        # tomorrow if anything's actually broken.
+        # continue-on-error so a flaky distributor doesn't suppress the
+        # digest — the render step will surface the failures in the email.
         continue-on-error: true
         run: python3 .github/scripts/distribute_forward_port.py
+
+      - name: Render digest HTML + subject
+        # if: always() so the digest goes out even if the distributor
+        # step crashed — we still want to know what synced.
+        if: always()
+        run: python3 .github/scripts/render_digest.py
 
       - name: Read digest subject
         id: subject
@@ -118,5 +127,7 @@ jobs:
             digest.subject
             digest.exit
             forks-parsed.json
+            sync-results.json
+            mig-buckets.json
             forward-port-distribution.json
           retention-days: 7
