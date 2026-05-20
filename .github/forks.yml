@@ -104,9 +104,14 @@ forks:
     install_forward_port: true
 
   - repo: ledoent/OpenUpgrade
-    # Default branch is "ledoent" (= 19.0 + CI customizations). Sync that
-    # alongside the upstream version-pinned branches.
-    branches: ["ledoent", "19.0"]
+    # NOTE: the fork's default branch `ledoent` is a CI overlay
+    # (= 19.0 + lab CI customizations). It is deliberately NOT in
+    # `branches:` — upstream PRs always target OCA's `19.0`, never
+    # the overlay, so merging upstream into `ledoent` is the wrong
+    # direction (would drop the overlay's customizations under a
+    # conflict). The overlay is rebased on top of 19.0 manually
+    # when it drifts too far. Only `19.0` gets auto-synced here.
+    branches: ["19.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false

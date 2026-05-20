@@ -17,42 +17,19 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-GH = "https://api.github.com"
-TOKEN = os.environ["GH_TOKEN"]
-HEADERS = {
-    "Authorization": f"Bearer {TOKEN}",
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "ledoent-fp-distributor/1.0",
-}
+from _github import make_headers, request, require_token
+
+HEADERS = make_headers(require_token(), user_agent="ledoent-fp-distributor/1.0")
 
 TEMPLATE = Path(".github/templates/forward-port.yml")
 DEST_PATH = ".github/workflows/forward-port.yml"
 
 
 def gh(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(
-        f"{GH}{path}", data=data, method=method, headers=HEADERS
-    )
-    if body:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            payload = r.read().decode()
-            return r.status, (json.loads(payload) if payload else {})
-    except urllib.error.HTTPError as e:
-        try:
-            payload = json.loads(e.read().decode())
-        except Exception:
-            payload = {"message": str(e)}
-        return e.code, payload
+    return request(method, path, headers=HEADERS, body=body)
 
 
 def push_workflow(repo: str, content_bytes: bytes) -> tuple[str, str]:

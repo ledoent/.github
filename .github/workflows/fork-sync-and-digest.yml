@@ -16,9 +16,13 @@ name: fork-sync-and-digest
 # doesn't require touching this workflow or the scripts.
 #
 # Secrets required (org-level or repo-level on ledoent/.github):
-#   LEDOENT_FORK_SYNC_TOKEN  PAT scoped to ledoent/*, with
-#                              Contents:write (sync + distributor),
-#                              Metadata:read, public_repo (upstream search)
+#   LEDOENT_FORK_SYNC_TOKEN  Fine-grained PAT scoped to ledoent/*, with
+#                              Contents: Read and write (merge-upstream
+#                                sync + distributor file writes),
+#                              Workflows: Read and write (REQUIRED — the
+#                                distributor writes .github/workflows/*),
+#                              Metadata: Read-only (auto),
+#                              public_repo (upstream OCA search).
 #   SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, SMTP_TO, SMTP_FROM
 #                              email delivery. Recommended: AWS SES (the
 #                              ledoweb.com domain is already verified there).
@@ -38,15 +42,31 @@ on:
 permissions:
   contents: read
 
+# Serialize runs. The daily cron + a manual dispatch could otherwise
+# race and double-bill the same merge-upstream call. Queue (not cancel)
+# so a manual test triggered during a cron run completes against the
+# already-synced state.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   sync-and-digest:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      # Third-party Actions pinned to commit SHAs so a tag retag (or a
+      # compromised maintainer) can't silently swap the code our PAT
+      # runs against. Comment shows the human-readable version each SHA
+      # currently maps to; bump both when reviewing for updates.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Sync forks + assemble digest
+      # The pipeline is split into collect → distribute → render so the
+      # forward-port distributor's outcomes land in the email body, not
+      # just in the artifact tarball where nobody looks.
+
+      - name: Collect sync + MIG data
         env:
           GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
         run: python3 .github/scripts/fork_sync_digest.py
@@ -54,18 +74,33 @@ jobs:
       - name: Distribute forward-port workflow to opted-in forks
         env:
           GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
-        # Don't fail the whole run if one fork's distributor push fails —
-        # the failure shows up in the digest's "Sync failures" section
-        # tomorrow if anything's actually broken.
+        # continue-on-error so a flaky distributor doesn't suppress the
+        # digest — the render step will surface the failures in the email.
         continue-on-error: true
         run: python3 .github/scripts/distribute_forward_port.py
 
+      - name: Render digest HTML + subject
+        # if: always() so the digest goes out even if the distributor
+        # step crashed — we still want to know what synced.
+        if: always()
+        run: python3 .github/scripts/render_digest.py
+
       - name: Read digest subject
         id: subject
-        run: echo "value=$(cat digest.subject)" >> "$GITHUB_OUTPUT"
+        # Heredoc form because `key=value` syntax breaks if the value
+        # contains `=`, backticks, or a newline. Subject lines are
+        # short and we control the content, but defending here is one
+        # line of YAML versus a future debugging session.
+        run: |
+          {
+            echo "value<<DIGEST_SUBJECT_EOF"
+            cat digest.subject
+            echo
+            echo "DIGEST_SUBJECT_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Send digest email
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7 # v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: 587
@@ -84,7 +119,7 @@ jobs:
 
       - name: Upload digest artifact (kept 7 days for debugging)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ github.run_id }}
           path: |
@@ -92,5 +127,7 @@ jobs:
             digest.subject
             digest.exit
             forks-parsed.json
+            sync-results.json
+            mig-buckets.json
             forward-port-distribution.json
           retention-days: 7
