@@ -21,41 +21,19 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import re
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-GH = "https://api.github.com"
-TOKEN = os.environ["GH_TOKEN"]
-HEADERS = {
-    "Authorization": f"Bearer {TOKEN}",
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "ledoent-fork-digest/2.0",
-}
+from _github import make_headers, request, require_token
+
+HEADERS = make_headers(require_token(), user_agent="ledoent-fork-digest/2.0")
 
 
 def gh(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
-    url = path if path.startswith("http") else f"{GH}{path}"
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(url, data=data, method=method, headers=HEADERS)
-    if body:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            payload = r.read().decode()
-            return r.status, (json.loads(payload) if payload else {})
-    except urllib.error.HTTPError as e:
-        try:
-            payload = json.loads(e.read().decode())
-        except Exception:
-            payload = {"message": str(e)}
-        return e.code, payload
+    return request(method, path, headers=HEADERS, body=body)
 
 
 def load_forks() -> list[dict]:
