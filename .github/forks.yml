@@ -146,3 +146,25 @@ forks:
     upstream_org: null
     upstream_track: null
     install_forward_port: false
+
+  # === self-hosted Sentry stack ===
+  # Sentry uses calendar versioning (26.x) + a fast-moving master.
+  # We track master so PR conflict detection on *-kencove rebase
+  # branches actually reflects reality. Without the sync, the fork's
+  # master sits frozen at fork-creation time (Feb 2026, 26.2.0) and
+  # every PR shows false conflicts against an obsolete base.
+  - repo: ledoent/sentry
+    branches: ["master"]
+    upstream_org: null   # no [MIG]-style PR digest for non-OCA forks
+    upstream_track: null
+    install_forward_port: false
+
+  # ledoent/seer's upstream (getsentry/seer) is private, so the
+  # merge-upstream API call would 404 with our PAT. Tracked here only
+  # to document that we know it exists; sync stays manual via the
+  # feature/explorer-endpoints rebase pattern.
+  # - repo: ledoent/seer
+  #   branches: ["main"]
+  #   upstream_org: null
+  #   upstream_track: null
+  #   install_forward_port: false
