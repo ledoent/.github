@@ -50,12 +50,20 @@ def load_forks(path: str | Path = ".github/forks.yml") -> list[dict]:
     cur: dict | None = None
 
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0].rstrip()
-        if not line.strip():
+        # Blank-line check uses the ORIGINAL line, before comment
+        # stripping. Otherwise comment-only lines inside an entry
+        # (e.g. an indented `# Default branch is …` between two keys)
+        # look identical to a true blank separator and silently
+        # truncate the entry. Comment lines are a no-op; only truly
+        # empty/whitespace-only lines terminate an entry.
+        if not raw.strip():
             if cur:
                 out.append(cur)
                 cur = None
             continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue  # comment-only line — keep accumulating into cur
 
         m_new = re.match(r"^  - repo:\s*(.+?)\s*$", line)
         if m_new:
