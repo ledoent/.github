@@ -20,85 +20,85 @@
 forks:
   # === OCA forks — primary 18.0 + 19.0 tracking ===
   - repo: ledoent/web
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/sale-workflow
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/calendar
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/mis-builder
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/account-financial-reporting
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/account-financial-tools
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/spreadsheet
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/dms
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/bank-statement-import
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/connector-telephony
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/e-commerce
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/social
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/knowledge
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
 
   - repo: ledoent/geospatial
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: true
@@ -111,25 +111,25 @@ forks:
     # direction (would drop the overlay's customizations under a
     # conflict). The overlay is rebased on top of 19.0 manually
     # when it drifts too far. Only `19.0` gets auto-synced here.
-    branches: ["19.0"]
+    branches: ["19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false
 
   - repo: ledoent/server-tools
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false
 
   - repo: ledoent/ddmrp
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false
 
   - repo: ledoent/report-print-send
-    branches: ["18.0", "19.0"]
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false
