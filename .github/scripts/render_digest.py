@@ -44,6 +44,14 @@ def render(
         if r.get("merge_type") == "none" and r["status"] < 400
     ]
     sync_skipped = [r for r in sync_results if r["skipped"]]
+    # Divergence = fork branch has commits upstream doesn't. merge-upstream
+    # returns success and produces a merge commit; the digest needs to
+    # surface this separately so it gets fixed (force-reset the branch)
+    # instead of accumulating forever.
+    sync_diverged = [
+        r for r in sync_results
+        if r.get("diverged") and not r["skipped"]
+    ]
 
     dist_fail = [r for r in distribution if r["action"] == "failed"]
     dist_created = [r for r in distribution if r["action"] == "created"]
@@ -58,7 +66,12 @@ def render(
         f"{len(sync_nochange)} already current · "
         f"{len(sync_skipped)} skipped (branch n/a) · "
         f'<span style="color:{"#c00" if sync_fail else "#0a0"}">'
-        f"{len(sync_fail)} failed</span></p>",
+        f"{len(sync_fail)} failed</span>"
+        + (
+            f' · <span style="color:#c80">{len(sync_diverged)} diverged</span>'
+            if sync_diverged else ""
+        )
+        + "</p>",
     ]
     if distribution:
         lines.append(
@@ -76,6 +89,24 @@ def render(
                 f"<li><code>{html.escape(r['repo'])}</code> "
                 f"({html.escape(r['branch'])}): "
                 f"HTTP {r['status']} — {html.escape(r['message'])}</li>"
+            )
+        lines.append("</ul>")
+
+    if sync_diverged:
+        lines.append(
+            '<h3 style="color:#c80">⚠️ Diverged from upstream</h3>'
+            "<p>These fork branches have commits the upstream doesn't — "
+            "merge-upstream silently produced a merge commit instead of "
+            "fast-forwarding. Reset the branch to upstream HEAD "
+            "(after backing it up).</p><ul>"
+        )
+        for r in sync_diverged:
+            ahead = r.get("ahead_by") or 0
+            behind = r.get("behind_by") or 0
+            lines.append(
+                f"<li><code>{html.escape(r['repo'])}</code> "
+                f"({html.escape(r['branch'])}): "
+                f"<b>{ahead} ahead</b>, {behind} behind</li>"
             )
         lines.append("</ul>")
 
@@ -132,6 +163,8 @@ def render(
         subject_parts.append(f"⚠️ {len(sync_fail)} sync fail")
     if dist_fail:
         subject_parts.append(f"⚠️ {len(dist_fail)} dist fail")
+    if sync_diverged:
+        subject_parts.append(f"⚠️ {len(sync_diverged)} diverged")
     if total_migs:
         subject_parts.append(f"{total_migs} MIG")
     subject = " — ".join(subject_parts)
