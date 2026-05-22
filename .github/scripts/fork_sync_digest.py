@@ -89,7 +89,7 @@ def load_forks(path: str | Path = ".github/forks.yml") -> list[dict]:
     return out
 
 
-def sync_branch(repo: str, branch: str) -> dict:
+def sync_branch(repo: str, branch: str, upstream_org: str | None = None) -> dict:
     status, body = gh("POST", f"/repos/{repo}/merge-upstream", {"branch": branch})
     msg = body.get("message", "")
     # "Branch n/a" responses we expect on forks that haven't cut a 20.0
@@ -100,14 +100,52 @@ def sync_branch(repo: str, branch: str) -> dict:
     skipped = (status == 422 and "does not exist" in msg.lower()) or (
         status == 404 and "branch not found" in msg.lower()
     )
-    return {
+    result = {
         "repo": repo,
         "branch": branch,
         "status": status,
         "message": msg,
         "merge_type": body.get("merge_type"),
         "skipped": skipped,
+        "ahead_by": None,
+        "behind_by": None,
+        "diverged": False,
     }
+    # Post-sync divergence check. merge-upstream silently produces a
+    # merge commit (instead of fast-forwarding) when the fork has local
+    # commits the upstream doesn't have — returning success either way.
+    # Without this check, accidental pushes to a series-named branch on
+    # the fork (e.g. someone "Merge pull request"-ing a feature branch
+    # into 18.0) accumulate undetected and the daily sync keeps adding
+    # merge commits on top. Compare against upstream to surface drift.
+    if upstream_org and not skipped and status < 400:
+        ahead, behind = _compare_with_upstream(repo, upstream_org, branch)
+        result["ahead_by"] = ahead
+        result["behind_by"] = behind
+        result["diverged"] = bool(ahead and ahead > 0)
+    return result
+
+
+def _compare_with_upstream(
+    fork_repo: str, upstream_org: str, branch: str
+) -> tuple[int | None, int | None]:
+    """Return (ahead_by, behind_by) for fork branch vs upstream branch.
+
+    ahead_by > 0 means the fork has commits the upstream doesn't —
+    almost always a mistake on a series-named tracking branch.
+    Returns (None, None) on any API error so a flaky compare doesn't
+    mask a successful sync.
+    """
+    fork_owner = fork_repo.split("/", 1)[0]
+    repo_name = fork_repo.split("/", 1)[1]
+    path = (
+        f"/repos/{upstream_org}/{repo_name}/compare/"
+        f"{upstream_org}:{branch}...{fork_owner}:{branch}"
+    )
+    status, body = gh("GET", path)
+    if status != 200:
+        return None, None
+    return body.get("ahead_by"), body.get("behind_by")
 
 
 def list_recent_mig_prs(
@@ -141,11 +179,13 @@ def main() -> int:
     sync_results: list[dict] = []
     for f in forks:
         for branch in f.get("branches", []):
-            res = sync_branch(f["repo"], branch)
+            res = sync_branch(f["repo"], branch, upstream_org=f.get("upstream_org"))
             sync_results.append(res)
             tag = "SKIP" if res["skipped"] else (
                 res.get("merge_type") or str(res["status"])
             )
+            if res.get("diverged"):
+                tag = f"{tag} DIVERGED+{res['ahead_by']}"
             print(f"  {res['repo']}@{branch:>10}  -> {tag}", file=sys.stderr)
     Path("sync-results.json").write_text(json.dumps(sync_results, indent=2))
 

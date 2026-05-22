@@ -107,6 +107,34 @@ def test_both_sync_and_dist_failures_in_subject():
     assert exit_marker == "2"
 
 
+def test_diverged_branch_warning_in_subject_and_body():
+    subj, body, exit_marker = render_digest.render(
+        sync_results=[
+            _sync(200, "fast-forward"),
+            {
+                "repo": "ledoent/social",
+                "branch": "18.0",
+                "status": 200,
+                "message": "",
+                "merge_type": "merge",
+                "skipped": False,
+                "ahead_by": 30,
+                "behind_by": 0,
+                "diverged": True,
+            },
+        ],
+        mig_buckets={},
+        distribution=[],
+    )
+    assert "⚠️ 1 diverged" in subj
+    # Divergence is a warning, not a failure — exit_marker should still be 0
+    # so the workflow doesn't conflate "needs manual fix" with "scripts broke".
+    assert exit_marker == "0"
+    assert "Diverged from upstream" in body
+    assert "ledoent/social" in body
+    assert "30 ahead" in body
+
+
 def test_html_escaping_in_failure_message():
     # Defensive: an API error message containing < > & shouldn't break
     # the rendered HTML (or open an XSS hole if anyone ever pipes the
