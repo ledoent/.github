@@ -64,18 +64,32 @@ def _patch_gh_sequence(monkeypatch, *returns):
     monkeypatch.setattr(fork_sync_digest, "gh", lambda *a, **kw: next(it))
 
 
+def _commits(*subjects):
+    return [{"commit": {"message": s}} for s in subjects]
+
+
 def test_diverged_branch_is_flagged_when_upstream_org_provided(monkeypatch):
     # merge-upstream succeeds with a merge commit; compare reports 30
-    # local commits ahead. This is the case that motivated the check —
-    # ledoent/social:18.0 in May 2026 silently accumulated drift because
-    # merge-upstream returns success either way.
+    # local commits ahead, one of which isn't a managed overlay. This
+    # is the case that motivated the check — ledoent/social:18.0 in
+    # May 2026 silently accumulated drift because merge-upstream
+    # returns success either way.
     _patch_gh_sequence(
         monkeypatch,
         (200, {"merge_type": "merge"}),
-        (200, {"ahead_by": 30, "behind_by": 0}),
+        (200, {
+            "ahead_by": 30,
+            "behind_by": 0,
+            "commits": _commits(
+                "chore(ci): created forward-port.yml from ledoent/.github distributor",
+                "Merge branch 'OCA:18.0' into 18.0",
+                "[FIX] some real human commit that shouldn't be here",
+            ),
+        }),
     )
     r = fork_sync_digest.sync_branch("ledoent/social", "18.0", upstream_org="OCA")
     assert r["diverged"] is True
+    assert r["managed_overlay"] is False
     assert r["ahead_by"] == 30
     assert r["behind_by"] == 0
 
@@ -84,11 +98,73 @@ def test_clean_fast_forward_is_not_diverged(monkeypatch):
     _patch_gh_sequence(
         monkeypatch,
         (200, {"merge_type": "fast-forward"}),
-        (200, {"ahead_by": 0, "behind_by": 0}),
+        (200, {"ahead_by": 0, "behind_by": 0, "commits": []}),
     )
     r = fork_sync_digest.sync_branch("ledoent/x", "18.0", upstream_org="OCA")
     assert r["diverged"] is False
+    assert r["managed_overlay"] is False
     assert r["ahead_by"] == 0
+
+
+def test_only_distributor_chore_is_managed_not_diverged(monkeypatch):
+    # The steady state for install_forward_port forks: 1 ahead by the
+    # chore commit alone. Must NOT trip the diverged alarm.
+    _patch_gh_sequence(
+        monkeypatch,
+        (200, {"merge_type": "none"}),
+        (200, {
+            "ahead_by": 1,
+            "behind_by": 0,
+            "commits": _commits(
+                "chore(ci): created forward-port.yml from ledoent/.github distributor",
+            ),
+        }),
+    )
+    r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
+    assert r["diverged"] is False
+    assert r["managed_overlay"] is True
+    assert r["ahead_by"] == 1
+
+
+def test_chore_plus_sync_merge_is_managed_not_diverged(monkeypatch):
+    # After an upstream advance, the chore + a "Merge branch 'OCA:...'"
+    # land together. Still structural, still not divergence.
+    _patch_gh_sequence(
+        monkeypatch,
+        (200, {"merge_type": "merge"}),
+        (200, {
+            "ahead_by": 2,
+            "behind_by": 0,
+            "commits": _commits(
+                "chore(ci): created forward-port.yml from ledoent/.github distributor",
+                "Merge branch 'OCA:18.0' into 18.0",
+            ),
+        }),
+    )
+    r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
+    assert r["diverged"] is False
+    assert r["managed_overlay"] is True
+    assert r["ahead_by"] == 2
+
+
+def test_updated_chore_subject_is_also_managed(monkeypatch):
+    # When the distributor template content changes, the chore commit
+    # message switches from "created" to "updated". Both shapes must
+    # be recognised.
+    _patch_gh_sequence(
+        monkeypatch,
+        (200, {"merge_type": "none"}),
+        (200, {
+            "ahead_by": 1,
+            "behind_by": 0,
+            "commits": _commits(
+                "chore(ci): updated forward-port.yml from ledoent/.github distributor",
+            ),
+        }),
+    )
+    r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
+    assert r["managed_overlay"] is True
+    assert r["diverged"] is False
 
 
 def test_no_upstream_org_skips_divergence_check(monkeypatch):
@@ -120,6 +196,7 @@ def test_compare_failure_does_not_mask_successful_sync(monkeypatch):
     assert r["status"] == 200
     assert r["merge_type"] == "fast-forward"
     assert r["diverged"] is False
+    assert r["managed_overlay"] is False
     assert r["ahead_by"] is None
 
 
