@@ -120,7 +120,12 @@ def test_diverged_branch_warning_in_subject_and_body():
                 "skipped": False,
                 "ahead_by": 30,
                 "behind_by": 0,
+                "ahead_commits": [
+                    "chore(ci): created forward-port.yml from ledoent/.github distributor",
+                    "[FIX] something real",
+                ],
                 "diverged": True,
+                "managed_overlay": False,
             },
         ],
         mig_buckets={},
@@ -133,6 +138,42 @@ def test_diverged_branch_warning_in_subject_and_body():
     assert "Diverged from upstream" in body
     assert "ledoent/social" in body
     assert "30 ahead" in body
+    # Unmanaged subject is shown; managed one is suppressed.
+    assert "[FIX] something real" in body
+    assert "forward-port.yml from ledoent/.github distributor" not in body
+
+
+def test_managed_overlay_is_quiet_footer_not_alarm():
+    # The everyday state for install_forward_port forks: 1 ahead by the
+    # chore commit (+ possibly a sync merge). Must NOT alarm in subject
+    # or body, but should show a single-line footer for transparency.
+    subj, body, exit_marker = render_digest.render(
+        sync_results=[
+            {
+                "repo": "ledoent/web",
+                "branch": "18.0",
+                "status": 200,
+                "message": "",
+                "merge_type": "none",
+                "skipped": False,
+                "ahead_by": 1,
+                "behind_by": 0,
+                "ahead_commits": [
+                    "chore(ci): created forward-port.yml from ledoent/.github distributor",
+                ],
+                "diverged": False,
+                "managed_overlay": True,
+            },
+        ],
+        mig_buckets={},
+        distribution=[],
+    )
+    assert "diverged" not in subj.lower()
+    assert "fail" not in subj.lower()
+    assert exit_marker == "0"
+    assert "Diverged from upstream" not in body
+    assert "Managed overlay:" in body
+    assert "1 branches" in body
 
 
 def test_html_escaping_in_failure_message():
