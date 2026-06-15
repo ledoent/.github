@@ -339,6 +339,9 @@ def _rebase_one(
     if behind == 0:
         return row(200, "already-current", 0, "up to date with base")
 
+    # The exact remote tip we just fetched — used as an explicit lease below.
+    remote_sha = git("rev-parse", f"origin/{branch}").stdout.decode().strip()
+
     # -f: discard the prior iteration's rebased worktree state cleanly.
     git("checkout", "--detach", "-f", f"origin/{branch}", check=True)
     git("clean", "-fdq")
@@ -360,9 +363,15 @@ def _rebase_one(
         return row(409, "conflict", behind, "conflict in: " + ", ".join(files[:8]))
 
     # PAT-authed push ⇒ re-triggers the fork's tests/pre-commit (a GITHUB_TOKEN
-    # push would not). --force-with-lease: the clone fetched origin/<branch>
-    # moments ago, so this guards against a racing push in the same window.
-    pushed = git("push", "--force-with-lease", "origin", f"HEAD:refs/heads/{branch}")
+    # push would not). Explicit lease (<ref>:<oid>) rather than the bare form:
+    # a tracking ref set by an explicit-refspec fetch makes bare
+    # --force-with-lease report "stale info" and reject. Pinning the lease to
+    # the sha we fetched keeps the race protection (rejects if someone pushed
+    # in the seconds since) without the false stale.
+    pushed = git(
+        "push", f"--force-with-lease=refs/heads/{branch}:{remote_sha}",
+        "origin", f"HEAD:refs/heads/{branch}",
+    )
     if pushed.returncode != 0:
         return row(500, "error", behind, f"push failed: {pushed.stderr.decode()[:200]}")
     return row(200, "rebased", behind, f"rebased onto {base_branch} (+{behind})")

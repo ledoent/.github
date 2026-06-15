@@ -71,6 +71,8 @@ def test_rebase_one_fetches_with_full_refspec(monkeypatch):
         args = [c for c in cmd if c != "git"]
         if "rev-list" in args:
             return _Fake(0, out=b"2\n")
+        if "rev-parse" in args:
+            return _Fake(0, out=b"deadbeefcafe\n")
         if "merge-base" in args:
             return _Fake(0, out=b"abc123\n")
         return _Fake(0)
@@ -83,3 +85,10 @@ def test_rebase_one_fetches_with_full_refspec(monkeypatch):
         "refs/heads/19.0-mig-foo:refs/remotes/origin/19.0-mig-foo" in c
         for c in fetch_cmds
     ), f"fetch must use a full refspec, got: {fetch_cmds}"
+    # Push must use an explicit lease (<ref>:<oid>) — the bare form trips
+    # "stale info" against a refspec-fetched tracking ref.
+    push_cmds = [c for c in calls if "push" in c]
+    assert push_cmds and any(
+        "--force-with-lease=refs/heads/19.0-mig-foo:deadbeefcafe" in c
+        for c in push_cmds
+    ), f"push must use an explicit lease, got: {push_cmds}"
