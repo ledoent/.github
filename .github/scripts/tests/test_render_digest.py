@@ -187,3 +187,85 @@ def test_html_escaping_in_failure_message():
     )
     assert "<script>alert(1)</script>" not in body
     assert "&lt;script&gt;" in body
+
+
+def _reb(branch, rebase_status, behind=1, message="", status=None):
+    if status is None:
+        status = {"rebased": 200, "already-current": 200,
+                  "conflict": 409, "error": 500}[rebase_status]
+    return {
+        "repo": "ledoent/ddmrp", "branch": branch, "check_type": "feature_rebase",
+        "status": status, "rebase_status": rebase_status, "behind": behind,
+        "message": message, "skipped": False,
+    }
+
+
+def test_rebase_conflict_warns_in_subject_but_is_not_a_failure():
+    # A rebase conflict blocks the day's PR (actionable) but it isn't a
+    # broken-script failure — subject flags it, exit_marker stays 0.
+    subj, body, exit_marker = render_digest.render(
+        sync_results=[_sync(200, "none")],
+        mig_buckets={},
+        distribution=[],
+        rebase_results=[
+            _reb("19.0-mig-ddmrp_adjustment", "rebased", behind=3,
+                 message="rebased onto 19.0 (+3)"),
+            _reb("19.0-mig-ddmrp_warning", "conflict", behind=96,
+                 message="conflict in: ddmrp_warning/models/foo.py"),
+        ],
+    )
+    assert "⚠️ 1 rebase conflict" in subj
+    assert exit_marker == "0"
+    assert "Feature-branch rebases" in body
+    assert "Need manual rebase" in body
+    assert "ddmrp_warning" in body
+    assert "19.0-mig-ddmrp_adjustment" in body
+
+
+def test_rebase_all_clean_no_subject_warning():
+    subj, body, _ = render_digest.render(
+        sync_results=[_sync(200, "none")],
+        mig_buckets={},
+        distribution=[],
+        rebase_results=[
+            _reb("19.0-mig-a", "rebased", message="rebased onto 19.0 (+1)"),
+            _reb("19.0-mig-b", "already-current", behind=0,
+                 message="up to date with base"),
+        ],
+    )
+    assert "rebase conflict" not in subj
+    assert "1 rebased" in body
+    assert "1 already current" in body
+
+
+def test_no_rebase_section_when_empty():
+    _, body, _ = render_digest.render(
+        sync_results=[_sync(200, "none")], mig_buckets={}, distribution=[],
+        rebase_results=[],
+    )
+    assert "Feature-branch rebases" not in body
+
+
+def test_render_ledoent_check_failures():
+    subj, body, exit_marker = render_digest.render(
+        sync_results=[
+            {
+                "repo": "ledoent/OpenUpgrade",
+                "branch": "ledoent",
+                "check_type": "rebase_check",
+                "status": 409,
+                "check_status": "conflict",
+                "message": "gitaggregate failed with conflicts",
+                "skipped": False,
+            }
+        ],
+        mig_buckets={},
+        distribution=[],
+    )
+    assert "⚠️ 1 ledoent fail" in subj
+    assert exit_marker == "1"
+    assert "Custom branch" in body
+    assert "ledoent/OpenUpgrade" in body
+    assert "conflict" in body
+    assert "gitaggregate failed with conflicts" in body
+

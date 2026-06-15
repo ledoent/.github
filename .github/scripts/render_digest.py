@@ -33,25 +33,32 @@ def render(
     sync_results: list[dict],
     mig_buckets: dict[str, list[dict]],
     distribution: list[dict],
+    rebase_results: list[dict] | None = None,
 ) -> tuple[str, str, str]:
+    rebase_results = rebase_results or []
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Separate regular syncs from ledoent checks
+    sync_only = [r for r in sync_results if r.get("branch") != "ledoent"]
+    ledoent_checks = [r for r in sync_results if r.get("branch") == "ledoent"]
+
     sync_fail = [
-        r for r in sync_results if r["status"] >= 400 and not r["skipped"]
+        r for r in sync_only if r["status"] >= 400 and not r["skipped"]
     ]
     sync_updated = [
-        r for r in sync_results if r.get("merge_type") in ("fast-forward", "merge")
+        r for r in sync_only if r.get("merge_type") in ("fast-forward", "merge")
     ]
     sync_nochange = [
-        r for r in sync_results
+        r for r in sync_only
         if r.get("merge_type") == "none" and r["status"] < 400
     ]
-    sync_skipped = [r for r in sync_results if r["skipped"]]
+    sync_skipped = [r for r in sync_only if r["skipped"]]
     # Divergence = fork branch has commits upstream doesn't, AND those
     # commits aren't part of the managed overlay (forward-port.yml
     # chore commit + sync-produced merge commits). Real divergence
     # means someone pushed work to a series branch — needs manual fix.
     sync_diverged = [
-        r for r in sync_results
+        r for r in sync_only
         if r.get("diverged") and not r["skipped"]
     ]
     # Managed-overlay branches are 1+ ahead but only by structural
@@ -63,10 +70,26 @@ def render(
         if r.get("managed_overlay") and not r["skipped"]
     ]
 
+    ledoent_fail = [r for r in ledoent_checks if r["status"] >= 400]
+    ledoent_clean = [r for r in ledoent_checks if r["status"] == 200]
+
+    rebase_done = [r for r in rebase_results if r["rebase_status"] == "rebased"]
+    rebase_current = [r for r in rebase_results if r["rebase_status"] == "already-current"]
+    rebase_conflict = [r for r in rebase_results if r["rebase_status"] == "conflict"]
+    rebase_error = [r for r in rebase_results if r["rebase_status"] == "error"]
+
     dist_fail = [r for r in distribution if r["action"] == "failed"]
     dist_created = [r for r in distribution if r["action"] == "created"]
     dist_updated = [r for r in distribution if r["action"] == "updated"]
     dist_unchanged = [r for r in distribution if r["action"] == "unchanged"]
+
+    ledoent_summary = ""
+    if ledoent_checks:
+        ledoent_summary = (
+            f" · <b>custom branches:</b> {len(ledoent_clean)} clean · "
+            f'<span style="color:{"#c00" if ledoent_fail else "#0a0"}">'
+            f"{len(ledoent_fail)} failed</span>"
+        )
 
     lines: list[str] = [
         '<html><body style="font-family: -apple-system, sans-serif; '
@@ -81,6 +104,7 @@ def render(
             f' · <span style="color:#c80">{len(sync_diverged)} diverged</span>'
             if sync_diverged else ""
         )
+        + ledoent_summary
         + "</p>",
     ]
     if distribution:
@@ -135,6 +159,17 @@ def render(
             )
         lines.append("</ul>")
 
+    if ledoent_fail:
+        lines.append('<h3 style="color:#c00">⚠️ Custom branch (<code>ledoent</code>) check failures</h3>')
+        lines.append('<p>The following custom branches failed to rebase or aggregate cleanly against their upstream targets:</p><ul>')
+        for r in ledoent_fail:
+            lines.append(
+                f"<li><code>{html.escape(r['repo'])}</code>: "
+                f"<b>{html.escape(r['check_status'])}</b> — "
+                f"<pre style='background:#f5f5f5;padding:5px;font-size:12px;'>{html.escape(r['message'])}</pre></li>"
+            )
+        lines.append("</ul>")
+
     if dist_fail:
         lines.append('<h3 style="color:#c00">⚠️ Distributor failures</h3><ul>')
         for r in dist_fail:
@@ -176,6 +211,40 @@ def render(
     else:
         lines.append("<p><i>No upstream [MIG] PRs merged in the last 24h.</i></p>")
 
+    if rebase_results:
+        lines.append(
+            "<h3>Feature-branch rebases</h3>"
+            f"<p>{len(rebase_done)} rebased · {len(rebase_current)} already current · "
+            f'<span style="color:{"#c80" if rebase_conflict else "#0a0"}">'
+            f"{len(rebase_conflict)} conflict</span>"
+            + (
+                f' · <span style="color:#c00">{len(rebase_error)} error</span>'
+                if rebase_error else ""
+            )
+            + "</p>"
+        )
+        if rebase_conflict or rebase_error:
+            lines.append(
+                '<p style="color:#c80">Need manual rebase '
+                "(resolve before opening the PR):</p><ul>"
+            )
+            for r in rebase_conflict + rebase_error:
+                lines.append(
+                    f"<li><code>{html.escape(r['repo'])}</code> "
+                    f"({html.escape(r['branch'])}): "
+                    f"<b>{html.escape(r['rebase_status'])}</b> — "
+                    f"{html.escape(r['message'])}</li>"
+                )
+            lines.append("</ul>")
+        if rebase_done:
+            lines.append("<ul>")
+            for r in rebase_done:
+                lines.append(
+                    f"<li><code>{html.escape(r['repo'])}</code> "
+                    f"({html.escape(r['branch'])}): {html.escape(r['message'])}</li>"
+                )
+            lines.append("</ul>")
+
     if sync_managed_overlay:
         lines.append(
             '<hr><p style="color:#888;font-size:11px">'
@@ -198,11 +267,20 @@ def render(
         subject_parts.append(f"⚠️ {len(dist_fail)} dist fail")
     if sync_diverged:
         subject_parts.append(f"⚠️ {len(sync_diverged)} diverged")
+    if ledoent_fail:
+        subject_parts.append(f"⚠️ {len(ledoent_fail)} ledoent fail")
+    if rebase_conflict:
+        subject_parts.append(f"⚠️ {len(rebase_conflict)} rebase conflict")
+    if rebase_error:
+        subject_parts.append(f"⚠️ {len(rebase_error)} rebase error")
     if total_migs:
         subject_parts.append(f"{total_migs} MIG")
     subject = " — ".join(subject_parts)
 
-    fail_count = len(sync_fail) + len(dist_fail)
+    # Rebase conflicts/errors are actionable (block the day's PR) but not a
+    # workflow failure — surfaced in the subject, kept out of the exit marker
+    # so the run stays green.
+    fail_count = len(sync_fail) + len(dist_fail) + len(ledoent_fail)
     return subject, "\n".join(lines), str(fail_count)
 
 
@@ -210,8 +288,11 @@ def main() -> int:
     sync_results = _load("sync-results.json", [])
     mig_buckets = _load("mig-buckets.json", {})
     distribution = _load("forward-port-distribution.json", [])
+    rebase_results = _load("rebase-results.json", [])
 
-    subject, body_html, exit_marker = render(sync_results, mig_buckets, distribution)
+    subject, body_html, exit_marker = render(
+        sync_results, mig_buckets, distribution, rebase_results
+    )
     Path("digest.html").write_text(body_html)
     Path("digest.subject").write_text(subject)
     Path("digest.exit").write_text(exit_marker)

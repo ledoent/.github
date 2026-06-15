@@ -214,3 +214,74 @@ def test_failed_sync_skips_compare(monkeypatch):
     assert len(calls) == 1
     assert r["status"] == 403
     assert r["diverged"] is False
+
+
+def test_check_ledoent_branch_non_existent(monkeypatch):
+    # 404 response from GitHub API means no ledoent branch exists
+    monkeypatch.setattr(fork_sync_digest, "gh", lambda method, path: (404, {}))
+    r = fork_sync_digest.check_ledoent_branch("ledoent/x", "OCA", "18.0")
+    assert r is None
+
+
+def test_check_ledoent_branch_rebase_clean(monkeypatch):
+    # ledoent branch exists (200 response)
+    monkeypatch.setattr(fork_sync_digest, "gh", lambda method, path: (200, {"name": "ledoent"}))
+    monkeypatch.setattr(fork_sync_digest, "require_token", lambda: "mock_token")
+
+    # Mock subprocess.run to simulate clean rebase without repos.yaml
+    import subprocess
+    from pathlib import Path
+
+    def fake_run(cmd, *args, **kwargs):
+        class MockCompletedProcess:
+            returncode = 0
+            stdout = b""
+            stderr = b""
+        return MockCompletedProcess()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    # Mock Path.exists to always return False for repos.yaml
+    original_exists = Path.exists
+    def fake_exists(self):
+        if self.name == "repos.yaml":
+            return False
+        return original_exists(self)
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    r = fork_sync_digest.check_ledoent_branch("ledoent/x", "OCA", "18.0")
+    assert r["check_status"] == "clean"
+    assert r["status"] == 200
+    assert r["branch"] == "ledoent"
+
+
+def test_check_ledoent_branch_gitaggregate_fail(monkeypatch):
+    # ledoent branch exists
+    monkeypatch.setattr(fork_sync_digest, "gh", lambda method, path: (200, {"name": "ledoent"}))
+    monkeypatch.setattr(fork_sync_digest, "require_token", lambda: "mock_token")
+
+    import subprocess
+    from pathlib import Path
+
+    def fake_run(cmd, *args, **kwargs):
+        class MockCompletedProcess:
+            # gitaggregate fails
+            returncode = 1 if "gitaggregate" in cmd else 0
+            stdout = b""
+            stderr = b"Conflict in merging branches"
+        return MockCompletedProcess()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    # Mock Path.exists to return True for repos.yaml
+    original_exists = Path.exists
+    def fake_exists(self):
+        if self.name == "repos.yaml":
+            return True
+        return original_exists(self)
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    r = fork_sync_digest.check_ledoent_branch("ledoent/x", "OCA", "18.0")
+    assert r["check_status"] == "conflict"
+    assert r["status"] == 409
+    assert "gitaggregate failed" in r["message"]
+
