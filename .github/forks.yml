@@ -16,6 +16,13 @@
 #                       `.github/workflows/forward-port.yml` to this fork
 #                       so labelled PRs cherry-pick across `branches`.
 #                       Default false; opt-in per fork.
+#   rebase_globs:       list of fnmatch globs (e.g. ["19.0-mig-*", "19.0-fix-*"]).
+#                       The digest rebases each matching feature branch onto the
+#                       freshly-synced `upstream_track` base and force-pushes the
+#                       clean ones (PAT push ⇒ the fork's CI re-runs); conflicts
+#                       are reported, never pushed. Absent = skip. Opt-in per
+#                       fork — only set it where you carry not-yet-merged feature
+#                       branches that must track an advancing base.
 
 forks:
   # === OCA forks — primary 18.0 + 19.0 tracking ===
@@ -23,85 +30,85 @@ forks:
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/sale-workflow
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/calendar
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/mis-builder
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/account-financial-reporting
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/account-financial-tools
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/spreadsheet
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/dms
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/bank-statement-import
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/connector-telephony
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/e-commerce
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/social
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/knowledge
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/geospatial
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
-    install_forward_port: true
+    install_forward_port: false
 
   - repo: ledoent/OpenUpgrade
     # NOTE: the fork's default branch `ledoent` is a CI overlay
@@ -127,6 +134,10 @@ forks:
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false
+    # ~16 not-yet-upstreamed submodule MIGs + a few fixes ride on top of
+    # OCA 19.0; keep them rebased nightly so each is mergeable when we open
+    # its PR (1-2/day cadence).
+    rebase_globs: ["19.0-mig-*", "19.0-fix-*"]
 
   - repo: ledoent/report-print-send
     branches: ["18.0", "19.0", "20.0"]

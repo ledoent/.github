@@ -53,7 +53,10 @@ concurrency:
 jobs:
   sync-and-digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Bumped from 15: the collect step now also clones each fork to check the
+    # ledoent overlay AND clones+rebases opted-in feature branches (forks.yml
+    # rebase_globs), so the git work outweighs the original API-only sync.
+    timeout-minutes: 30
 
     steps:
       # Third-party Actions pinned to commit SHAs so a tag retag (or a
@@ -61,6 +64,19 @@ jobs:
       # runs against. Comment shows the human-readable version each SHA
       # currently maps to; bump both when reviewing for updates.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+
+      - name: Install git-aggregator
+        run: pip install git-aggregator==4.1
+
+      - name: Configure git identity (required by gitaggregate/rebase checks)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       # The pipeline is split into collect → distribute → render so the
       # forward-port distributor's outcomes land in the email body, not
@@ -128,6 +144,7 @@ jobs:
             digest.exit
             forks-parsed.json
             sync-results.json
+            rebase-results.json
             mig-buckets.json
             forward-port-distribution.json
           retention-days: 7
