@@ -327,7 +327,10 @@ def _rebase_one(
             ["git", *args], cwd=repo_dir, capture_output=True, **kw
         )
 
-    fetched = git("fetch", "origin", branch)
+    # Explicit refspec: the clone is --single-branch, so a bare
+    # `fetch origin <branch>` only updates FETCH_HEAD, not
+    # refs/remotes/origin/<branch> — leaving the checkout below with no ref.
+    fetched = git("fetch", "origin", f"refs/heads/{branch}:refs/remotes/origin/{branch}")
     if fetched.returncode != 0:
         return row(500, "error", None, f"fetch failed: {fetched.stderr.decode()[:200]}")
 
@@ -336,7 +339,8 @@ def _rebase_one(
     if behind == 0:
         return row(200, "already-current", 0, "up to date with base")
 
-    git("checkout", "--detach", f"origin/{branch}", check=True)
+    # -f: discard the prior iteration's rebased worktree state cleanly.
+    git("checkout", "--detach", "-f", f"origin/{branch}", check=True)
     git("clean", "-fdq")
     mergebase = git("merge-base", base_ref, f"origin/{branch}").stdout.decode().strip()
     # Content-preserving rebase: hooks off (nothing new to lint — the branch

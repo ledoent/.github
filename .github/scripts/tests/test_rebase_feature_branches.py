@@ -51,3 +51,35 @@ def test_rebase_feature_branches_no_matches_does_not_clone(monkeypatch):
 
     monkeypatch.setattr(fsd.subprocess, "run", boom)
     assert fsd.rebase_feature_branches("ledoent/ddmrp", ["19.0-mig-*"], "19.0") == []
+
+
+class _Fake:
+    def __init__(self, rc=0, out=b"", err=b""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_rebase_one_fetches_with_full_refspec(monkeypatch):
+    # Regression: a --single-branch clone + bare `fetch origin <branch>`
+    # populates FETCH_HEAD but NOT origin/<branch>, so the checkout below
+    # explodes. The fetch must use refs/heads/<b>:refs/remotes/origin/<b>.
+    from pathlib import Path
+
+    calls = []
+
+    def fake_run(cmd, cwd=None, capture_output=False, env=None, check=False, **k):
+        calls.append(cmd)
+        args = [c for c in cmd if c != "git"]
+        if "rev-list" in args:
+            return _Fake(0, out=b"2\n")
+        if "merge-base" in args:
+            return _Fake(0, out=b"abc123\n")
+        return _Fake(0)
+
+    monkeypatch.setattr(fsd.subprocess, "run", fake_run)
+    res = fsd._rebase_one(Path("/tmp/x"), "ledoent/ddmrp", "19.0-mig-foo", "19.0", "origin/19.0")
+    assert res["rebase_status"] == "rebased"
+    fetch_cmds = [c for c in calls if "fetch" in c]
+    assert fetch_cmds and any(
+        "refs/heads/19.0-mig-foo:refs/remotes/origin/19.0-mig-foo" in c
+        for c in fetch_cmds
+    ), f"fetch must use a full refspec, got: {fetch_cmds}"
