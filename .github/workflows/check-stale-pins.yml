@@ -1,0 +1,93 @@
+name: check-stale-pins
+
+# Nightly org-level workflow:
+#
+#   Scan every open PR we author (forks + upstream OCA) for
+#   test-requirements.txt git+https dependency pins whose OCA wheel is now
+#   published on PyPI, i.e. the pin is removable. Emails a digest ONLY when
+#   there is something to act on, so a clean night is silent.
+#
+# Why this exists: the dep-chain-in-flight pattern pins an unmerged dependency
+# PR; once that dep's wheel ships, the pin is stale and the PR's "Detect
+# unreleased dependencies" check stays red until the pin is stripped. Nothing
+# surfaced that transition (a stale mis_builder pin sat on OCA/l10n-usa#180),
+# so this closes the loop. See .github/scripts/check_stale_pins.py.
+#
+# Secrets (org-level or on ledoent/.github):
+#   LEDOENT_FORK_SYNC_TOKEN  Fine-grained PAT, ledoent/* + public_repo (read
+#                              PRs across our forks and search upstream OCA).
+#   SMTP_SERVER / SMTP_USERNAME / SMTP_PASSWORD / SMTP_TO / SMTP_FROM
+#                              same AWS SES setup as fork-sync-and-digest.
+
+on:
+  schedule:
+    - cron: "30 13 * * *"   # 13:30 UTC, just after fork-sync-and-digest
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # Third-party Actions pinned to commit SHAs (same versions as
+      # fork-sync-and-digest.yml — bump both together when reviewing).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+
+      - name: Scan open PRs for removable pins
+        env:
+          GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
+        run: python3 .github/scripts/check_stale_pins.py
+
+      - name: Write job summary
+        if: always()
+        run: cat pins-digest.html >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Read subject + count
+        id: digest
+        run: |
+          {
+            echo "subject<<EOF"
+            cat pins-digest.subject
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "count=$(python3 -c 'import json;print(len(json.load(open("stale-pins.json"))))')" >> "$GITHUB_OUTPUT"
+
+      - name: Email digest (only when there are stale pins)
+        if: steps.digest.outputs.count != '0'
+        uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7 # v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: 587
+          secure: false
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.digest.outputs.subject }}
+          to: ${{ secrets.SMTP_TO }}
+          from: ${{ secrets.SMTP_FROM }}
+          html_body: file://pins-digest.html
+          ignore_cert: false
+
+      - name: Upload digest artifact (kept 7 days for debugging)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stale-pins-${{ github.run_id }}
+          path: |
+            stale-pins.json
+            pins-digest.html
+            pins-digest.subject
+          retention-days: 7
