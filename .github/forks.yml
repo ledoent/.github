@@ -116,12 +116,19 @@ forks:
     # `branches:` — upstream PRs always target OCA's `19.0`, never
     # the overlay, so merging upstream into `ledoent` is the wrong
     # direction (would drop the overlay's customizations under a
-    # conflict). The overlay is rebased on top of 19.0 manually
-    # when it drifts too far. Only `19.0` gets auto-synced here.
+    # conflict). Only `19.0` gets fast-forward-synced via `branches:`.
+    # The overlay AND the unmerged migration branches need a REBASE onto
+    # 19.0 (the merge-upstream API can't rebase) — `rebase_globs` below
+    # makes the daily fork-sync (fork_sync_digest.rebase_feature_branches)
+    # rebase each matching branch onto the freshly-synced 19.0 and
+    # force-push it, so the fork CI re-runs. Replaces the old "rebased
+    # manually when it drifts" path that silently let `ledoent` fall 47
+    # commits behind.
     branches: ["19.0", "20.0"]
     upstream_org: OCA
     upstream_track: "19.0"
     install_forward_port: false
+    rebase_globs: ["ledoent", "19.0-mig-*", "19.0-fix-*"]
 
   - repo: ledoent/server-tools
     branches: ["18.0", "19.0", "20.0"]
