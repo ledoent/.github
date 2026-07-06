@@ -216,7 +216,7 @@ def check_ledoent_branch(repo: str, upstream_org: str | None, upstream_track: st
     check_status = "error"
     error_msg = ""
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_path = Path(tmpdir)
         repo_dir = tmp_path / "repo"
 
@@ -396,7 +396,7 @@ def rebase_feature_branches(repo: str, globs: list[str], base_branch: str) -> li
     fork_url = f"https://x-access-token:{token}@github.com/{repo}.git"
     results: list[dict] = []
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             repo_dir = Path(tmpdir) / "repo"
             clone = subprocess.run(
                 ["git", "clone", "--branch", base_branch, "--single-branch", fork_url, "repo"],
