@@ -38,6 +38,12 @@ forks:
     upstream_track: "19.0"
     install_forward_port: false
 
+  - repo: ledoent/stock-logistics-workflow
+    branches: ["18.0", "19.0", "20.0"]
+    upstream_org: OCA
+    upstream_track: "19.0"
+    install_forward_port: false
+
   - repo: ledoent/calendar
     branches: ["18.0", "19.0", "20.0"]
     upstream_org: OCA
