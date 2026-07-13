@@ -53,18 +53,18 @@ def render(
         if r.get("merge_type") == "none" and r["status"] < 400
     ]
     sync_skipped = [r for r in sync_only if r["skipped"]]
-    # Divergence = fork branch has commits upstream doesn't, AND those
-    # commits aren't part of the managed overlay (forward-port.yml
-    # chore commit + sync-produced merge commits). Real divergence
-    # means someone pushed work to a series branch — needs manual fix.
+    # Divergence = a series branch has commits upstream doesn't, by any
+    # hand other than the distributor's. Someone pushed work to a mirror
+    # branch. The sync refuses to merge it (a merge would only entrench
+    # the drift), so it stays broken until a human resets it.
     sync_diverged = [
         r for r in sync_only
         if r.get("diverged") and not r["skipped"]
     ]
-    # Managed-overlay branches are 1+ ahead but only by structural
-    # commits. Counted in a small footer for transparency, never in the
-    # subject line — they're the steady state for install_forward_port
-    # forks and would otherwise spam the inbox every day.
+    # Ahead only by the distributor's forward-port.yml chore commit.
+    # Still not a mirror, so still not merged — but attributable to the
+    # pipeline rather than a stray push, so it gets a footer line instead
+    # of the subject-line alarm.
     sync_managed_overlay = [
         r for r in sync_results
         if r.get("managed_overlay") and not r["skipped"]
@@ -249,9 +249,11 @@ def render(
         lines.append(
             '<hr><p style="color:#888;font-size:11px">'
             f"<b>Managed overlay:</b> {len(sync_managed_overlay)} branches "
-            "are 1+ ahead of upstream only by structural commits "
-            "(forward-port.yml distributor + sync-produced merges). "
-            "Expected; not divergence.</p>"
+            "are ahead of upstream by the forward-port.yml distributor "
+            "commit alone. Not a stray push — but not an exact mirror "
+            "either, so they were <i>not</i> merged. Reset them to the "
+            "upstream tip (or turn off <code>install_forward_port</code>) "
+            "to get them syncing again.</p>"
         )
     lines.append(
         '<hr><p style="color:#888;font-size:11px">'

@@ -59,92 +59,123 @@ def test_conflict_409_is_not_skipped(monkeypatch):
 
 
 def _patch_gh_sequence(monkeypatch, *returns):
-    """Make gh() return each tuple in turn (merge-upstream, then compare)."""
+    """Make gh() return each tuple in turn.
+
+    On a fork with an upstream_org the compare call comes FIRST (the
+    mirror guard), and merge-upstream only runs if the branch is not
+    ahead. Order the tuples accordingly.
+    """
     it = iter(returns)
     monkeypatch.setattr(fork_sync_digest, "gh", lambda *a, **kw: next(it))
+
+
+def _record_gh(monkeypatch, *returns):
+    """Same, but also records (method, path) of every call made."""
+    calls = []
+    it = iter(returns)
+
+    def fake_gh(method, path, body=None):
+        calls.append((method, path))
+        return next(it)
+
+    monkeypatch.setattr(fork_sync_digest, "gh", fake_gh)
+    return calls
 
 
 def _commits(*subjects):
     return [{"commit": {"message": s}} for s in subjects]
 
 
+def _compare(ahead, *subjects, behind=0):
+    return (200, {
+        "ahead_by": ahead,
+        "behind_by": behind,
+        "commits": _commits(*subjects),
+    })
+
+
 def test_diverged_branch_is_flagged_when_upstream_org_provided(monkeypatch):
-    # merge-upstream succeeds with a merge commit; compare reports 30
-    # local commits ahead, one of which isn't a managed overlay. This
-    # is the case that motivated the check — ledoent/social:18.0 in
-    # May 2026 silently accumulated drift because merge-upstream
-    # returns success either way.
-    _patch_gh_sequence(
+    # A stray human commit on a series branch. Must be flagged AND must
+    # not be merged — merging would bury it under a merge commit.
+    calls = _record_gh(
         monkeypatch,
-        (200, {"merge_type": "merge"}),
-        (200, {
-            "ahead_by": 30,
-            "behind_by": 0,
-            "commits": _commits(
-                "chore(ci): created forward-port.yml from ledoent/.github distributor",
-                "Merge branch 'OCA:18.0' into 18.0",
-                "[FIX] some real human commit that shouldn't be here",
-            ),
-        }),
+        _compare(30, "[FIX] some real human commit that shouldn't be here"),
     )
     r = fork_sync_digest.sync_branch("ledoent/social", "18.0", upstream_org="OCA")
     assert r["diverged"] is True
     assert r["managed_overlay"] is False
     assert r["ahead_by"] == 30
-    assert r["behind_by"] == 0
+    assert not any(m == "POST" for m, _ in calls), "must not merge a diverged branch"
+
+
+def test_ahead_branch_is_never_merged(monkeypatch):
+    # THE regression this guard exists for. merge-upstream on a branch
+    # that is ahead cannot fast-forward, so it mints a merge commit and
+    # returns 200 — leaving the branch ahead forever, so the next run
+    # mints another. 14 series branches accumulated ~140 of these before
+    # anyone noticed. The guard must refuse to call merge-upstream at all.
+    calls = _record_gh(monkeypatch, _compare(1, "Merge branch 'OCA:18.0' into 18.0"))
+    r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
+    assert calls == [("GET", "/repos/OCA/web/compare/OCA:18.0...ledoent:18.0")]
+    assert r["merge_type"] is None
+    assert "refusing to merge" in r["message"]
+
+
+def test_merge_commit_is_no_longer_whitelisted(monkeypatch):
+    # The old MANAGED_COMMIT_PATTERNS matched "Merge branch '...' into",
+    # so the tool's own merge commits were classified as expected and the
+    # drift stayed invisible. A merge commit on a mirror branch is always
+    # a bug and must now surface as divergence.
+    _patch_gh_sequence(monkeypatch, _compare(2, "Merge branch 'OCA:18.0' into 18.0"))
+    r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
+    assert r["diverged"] is True
+    assert r["managed_overlay"] is False
 
 
 def test_clean_fast_forward_is_not_diverged(monkeypatch):
     _patch_gh_sequence(
         monkeypatch,
+        _compare(0),
         (200, {"merge_type": "fast-forward"}),
-        (200, {"ahead_by": 0, "behind_by": 0, "commits": []}),
     )
     r = fork_sync_digest.sync_branch("ledoent/x", "18.0", upstream_org="OCA")
     assert r["diverged"] is False
     assert r["managed_overlay"] is False
+    assert r["merge_type"] == "fast-forward"
     assert r["ahead_by"] == 0
 
 
-def test_only_distributor_chore_is_managed_not_diverged(monkeypatch):
-    # The steady state for install_forward_port forks: 1 ahead by the
-    # chore commit alone. Must NOT trip the diverged alarm.
+def test_behind_only_branch_still_fast_forwards(monkeypatch):
+    # Stale but pristine (a strict ancestor of upstream) — the common
+    # case. Must still sync.
     _patch_gh_sequence(
         monkeypatch,
-        (200, {"merge_type": "none"}),
-        (200, {
-            "ahead_by": 1,
-            "behind_by": 0,
-            "commits": _commits(
-                "chore(ci): created forward-port.yml from ledoent/.github distributor",
-            ),
-        }),
+        _compare(0, behind=4),
+        (200, {"merge_type": "fast-forward"}),
+    )
+    r = fork_sync_digest.sync_branch("ledoent/OpenUpgrade", "19.0", upstream_org="OCA")
+    assert r["merge_type"] == "fast-forward"
+    assert r["diverged"] is False
+    assert r["behind_by"] == 4
+
+
+def test_only_distributor_chore_is_managed_not_diverged(monkeypatch):
+    # The distributor's forward-port.yml commit. Named as managed so the
+    # digest can word it accurately ("the distributor did this, not a
+    # human") — but it still leaves the branch a non-mirror, so it is
+    # still not merged.
+    calls = _record_gh(
+        monkeypatch,
+        _compare(
+            1,
+            "chore(ci): created forward-port.yml from ledoent/.github distributor",
+        ),
     )
     r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
     assert r["diverged"] is False
     assert r["managed_overlay"] is True
     assert r["ahead_by"] == 1
-
-
-def test_chore_plus_sync_merge_is_managed_not_diverged(monkeypatch):
-    # After an upstream advance, the chore + a "Merge branch 'OCA:...'"
-    # land together. Still structural, still not divergence.
-    _patch_gh_sequence(
-        monkeypatch,
-        (200, {"merge_type": "merge"}),
-        (200, {
-            "ahead_by": 2,
-            "behind_by": 0,
-            "commits": _commits(
-                "chore(ci): created forward-port.yml from ledoent/.github distributor",
-                "Merge branch 'OCA:18.0' into 18.0",
-            ),
-        }),
-    )
-    r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
-    assert r["diverged"] is False
-    assert r["managed_overlay"] is True
-    assert r["ahead_by"] == 2
+    assert not any(m == "POST" for m, _ in calls)
 
 
 def test_updated_chore_subject_is_also_managed(monkeypatch):
@@ -153,14 +184,10 @@ def test_updated_chore_subject_is_also_managed(monkeypatch):
     # be recognised.
     _patch_gh_sequence(
         monkeypatch,
-        (200, {"merge_type": "none"}),
-        (200, {
-            "ahead_by": 1,
-            "behind_by": 0,
-            "commits": _commits(
-                "chore(ci): updated forward-port.yml from ledoent/.github distributor",
-            ),
-        }),
+        _compare(
+            1,
+            "chore(ci): updated forward-port.yml from ledoent/.github distributor",
+        ),
     )
     r = fork_sync_digest.sync_branch("ledoent/web", "18.0", upstream_org="OCA")
     assert r["managed_overlay"] is True
@@ -168,29 +195,25 @@ def test_updated_chore_subject_is_also_managed(monkeypatch):
 
 
 def test_no_upstream_org_skips_divergence_check(monkeypatch):
-    # Non-OCA forks (upstream_org: null) get no compare call. Verified by
-    # patching gh to fail loudly if called more than once.
-    calls = []
-
-    def fake_gh(method, path, body=None):
-        calls.append((method, path))
-        return 200, {"merge_type": "fast-forward"}
-
-    monkeypatch.setattr(fork_sync_digest, "gh", fake_gh)
-    r = fork_sync_digest.sync_branch("ledoent/x", "master")
-    assert len(calls) == 1
+    # Non-OCA forks (upstream_org: null) are NOT mirrors — sentry/master
+    # carries real customizations — so they get no guard and no compare
+    # call. merge-upstream is the correct primitive there.
+    calls = _record_gh(monkeypatch, (200, {"merge_type": "merge"}))
+    r = fork_sync_digest.sync_branch("ledoent/sentry", "master")
+    assert calls == [("POST", "/repos/ledoent/sentry/merge-upstream")]
     assert r["diverged"] is False
     assert r["ahead_by"] is None
+    assert r["merge_type"] == "merge"
 
 
-def test_compare_failure_does_not_mask_successful_sync(monkeypatch):
-    # If the compare endpoint flakes, the sync result still records the
-    # merge-upstream success. ahead_by stays None so the digest knows we
-    # don't actually know — better than a false "clean" classification.
+def test_compare_failure_does_not_block_the_sync(monkeypatch):
+    # If the compare endpoint flakes we cannot prove the branch is ahead.
+    # Fall through to merge-upstream rather than stall the sync, and
+    # leave ahead_by None so the digest knows we don't actually know.
     _patch_gh_sequence(
         monkeypatch,
-        (200, {"merge_type": "fast-forward"}),
         (500, {"message": "Internal Server Error"}),
+        (200, {"merge_type": "fast-forward"}),
     )
     r = fork_sync_digest.sync_branch("ledoent/x", "18.0", upstream_org="OCA")
     assert r["status"] == 200
@@ -200,19 +223,17 @@ def test_compare_failure_does_not_mask_successful_sync(monkeypatch):
     assert r["ahead_by"] is None
 
 
-def test_failed_sync_skips_compare(monkeypatch):
-    # No point burning a compare call if merge-upstream itself failed —
-    # the failure already triggers a digest alarm.
-    calls = []
-
-    def fake_gh(method, path, body=None):
-        calls.append((method, path))
-        return 403, {"message": "Resource not accessible by personal access token"}
-
-    monkeypatch.setattr(fork_sync_digest, "gh", fake_gh)
+def test_failed_sync_is_still_reported(monkeypatch):
+    # The PAT-scope error class. Compare says clean, merge-upstream then
+    # fails — the failure must survive into the result.
+    _patch_gh_sequence(
+        monkeypatch,
+        _compare(0),
+        (403, {"message": "Resource not accessible by personal access token"}),
+    )
     r = fork_sync_digest.sync_branch("ledoent/x", "18.0", upstream_org="OCA")
-    assert len(calls) == 1
     assert r["status"] == 403
+    assert r["skipped"] is False
     assert r["diverged"] is False
 
 
