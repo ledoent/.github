@@ -39,24 +39,23 @@ from _github import make_headers, request, require_token
 # the token env). Populated by main() before any gh() call.
 HEADERS: dict = {}
 
-# Ahead-commit subjects that the sync pipeline itself produces, so an
-# overlay of these on top of upstream is expected — not "diverged" in
-# the alarming sense. Two sources:
-#   1. distribute_forward_port.py writes forward-port.yml via the
-#      Contents API, which lands as a commit on the default (series)
-#      branch. The workflow file MUST live on the branch where
-#      pull_request_target events fire, so this commit is structural.
-#   2. merge-upstream produces a "Merge branch 'OCA:<b>' into <b>"
-#      commit any time the fork is non-empty (i.e. carries #1). Also
-#      structural — not a sign of human error on a series branch.
-# Anything outside these patterns is a real divergence (someone pushed
-# work to a series branch directly) and stays flagged.
+# Ahead-commit subjects the sync pipeline itself produces. Used only to
+# word the digest entry ("this is the distributor's doing, not a stray
+# human push") — it never suppresses the mirror guard below.
+#
+# A "Merge branch 'OCA:<b>' into <b>" pattern deliberately does NOT
+# appear here. It used to, and that is precisely how ~140 merge commits
+# accumulated unseen across 14 series branches: one orphaned
+# forward-port.yml commit made fast-forward impossible, merge-upstream
+# minted a merge commit on every run, and the whitelist classified each
+# one as expected. The mechanism laundered its own damage. Series
+# branches are exact upstream mirrors; a merge commit on one is always
+# a bug, so it must always be reportable.
 MANAGED_COMMIT_PATTERNS = (
     re.compile(
         r"^chore\(ci\): (created|updated) forward-port\.yml "
         r"from ledoent/\.github distributor"
     ),
-    re.compile(r"^Merge branch '[^']+' into "),
 )
 
 
@@ -121,6 +120,56 @@ def load_forks(path: str | Path = ".github/forks.yml") -> list[dict]:
 
 
 def sync_branch(repo: str, branch: str, upstream_org: str | None = None) -> dict:
+    result = {
+        "repo": repo,
+        "branch": branch,
+        "status": None,
+        "message": "",
+        "merge_type": None,
+        "skipped": False,
+        "ahead_by": None,
+        "behind_by": None,
+        "ahead_commits": [],
+        "diverged": False,
+        "managed_overlay": False,
+    }
+
+    # Mirror guard — runs BEFORE merge-upstream, and that order is the
+    # whole point. merge-upstream cannot fast-forward a branch that is
+    # ahead of upstream, so it silently mints a merge commit instead and
+    # still returns 200. That merge commit leaves the branch ahead
+    # forever, so the next run mints another. Checking afterwards only
+    # documents the damage; checking first prevents it.
+    #
+    # A fork series branch is by definition an exact copy of upstream.
+    # If it is ahead by even one commit it is no longer a mirror, and
+    # the fix is a human deciding what to do with those commits — not a
+    # merge. So: report, and leave the branch alone.
+    #
+    # (Only forks with an upstream_org are mirrors. Non-OCA forks —
+    # sentry, odoo-cloud-platform — legitimately carry customizations on
+    # the tracked branch, and merging upstream into them is correct.)
+    if upstream_org:
+        ahead, behind, subjects = _compare_with_upstream(
+            repo, upstream_org, branch
+        )
+        result["ahead_by"] = ahead
+        result["behind_by"] = behind
+        result["ahead_commits"] = subjects
+        if ahead and ahead > 0:
+            unmanaged = [s for s in subjects if not _is_managed_commit(s)]
+            result["diverged"] = bool(unmanaged)
+            result["managed_overlay"] = not unmanaged
+            result["status"] = 200
+            result["message"] = (
+                f"not a mirror: {ahead} commit(s) ahead of "
+                f"{upstream_org}:{branch} — refusing to merge (that would "
+                f"add a merge commit and entrench the drift). Reset the "
+                f"branch to the upstream tip, or move the commits to a "
+                f"feature branch."
+            )
+            return result
+
     status, body = gh("POST", f"/repos/{repo}/merge-upstream", {"branch": branch})
     msg = body.get("message", "")
     # "Branch n/a" responses we expect on forks that haven't cut a 20.0
@@ -131,44 +180,10 @@ def sync_branch(repo: str, branch: str, upstream_org: str | None = None) -> dict
     skipped = (status == 422 and "does not exist" in msg.lower()) or (
         status == 404 and "branch not found" in msg.lower()
     )
-    result = {
-        "repo": repo,
-        "branch": branch,
-        "status": status,
-        "message": msg,
-        "merge_type": body.get("merge_type"),
-        "skipped": skipped,
-        "ahead_by": None,
-        "behind_by": None,
-        "ahead_commits": [],
-        "diverged": False,
-        "managed_overlay": False,
-    }
-    # Post-sync divergence check. merge-upstream silently produces a
-    # merge commit (instead of fast-forwarding) when the fork has local
-    # commits the upstream doesn't have — returning success either way.
-    # Without this check, accidental pushes to a series-named branch on
-    # the fork accumulate undetected.
-    #
-    # But: forks with install_forward_port carry a managed chore commit
-    # on every series branch (the distributor's forward-port.yml write),
-    # and merge-upstream then layers a "Merge branch 'OCA:<b>'" commit
-    # on top each time upstream advances. Both are structural — not
-    # human error. Classify them as `managed_overlay` and reserve
-    # `diverged` for genuinely unexpected ahead-commits.
-    if upstream_org and not skipped and status < 400:
-        ahead, behind, subjects = _compare_with_upstream(
-            repo, upstream_org, branch
-        )
-        result["ahead_by"] = ahead
-        result["behind_by"] = behind
-        result["ahead_commits"] = subjects
-        if ahead and ahead > 0:
-            unmanaged = [s for s in subjects if not _is_managed_commit(s)]
-            if unmanaged:
-                result["diverged"] = True
-            else:
-                result["managed_overlay"] = True
+    result["status"] = status
+    result["message"] = msg
+    result["merge_type"] = body.get("merge_type")
+    result["skipped"] = skipped
     return result
 
 
