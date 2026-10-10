@@ -1,0 +1,99 @@
+name: keepalive
+
+# Keeps this repository's `schedule` triggers from being disabled.
+#
+# GitHub disables a scheduled workflow after 60 days with no commit to the
+# repository, and does NOT re-enable it when activity resumes.
+#
+# That is exactly what happened here. Last push 2026-07-30, last fork-sync run
+# 2026-09-28 -- 60 days later to the day. Both `fork-sync-and-digest` and
+# `check-stale-pins` flipped to `disabled_inactivity`, every tracked fork
+# silently stopped syncing for 12 days, and the only signal was a digest email
+# that stopped arriving. Nothing went red; there was nothing to go red.
+#
+# Inactivity is measured per REPOSITORY, so one commit from here keeps every
+# scheduled workflow in this repo alive.
+#
+# Deliberately its own workflow rather than a step on the end of the daily
+# sync. Two reasons:
+#   1. It can be exercised with `workflow_dispatch` on its own, without
+#      triggering a full fork sync (which force-pushes rebased branches).
+#      A liveness mechanism nobody can safely test is how this class of bug
+#      survives in the first place.
+#   2. Liveness must not depend on the sync job's health. If the sync starts
+#      failing before its last step, a keepalive living there never runs --
+#      so the schedule dies precisely when something is already wrong.
+#
+# Secrets:
+#   LEDOENT_FORK_SYNC_TOKEN  needs Contents: Read and write on ledoent/*,
+#                            which it already has for the fork sync. The
+#                            default GITHUB_TOKEN is NOT used: a push made
+#                            with it cannot be relied on to count as the
+#                            repository activity this is for.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"   # weekly, Monday 04:17 UTC — off the hour on purpose
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Commit even if the last commit is newer than the threshold (for testing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # fetch-depth: 0 because this reads the last commit date and pushes.
+      # Pushing from a shallow clone is a known source of server-side
+      # rejection, and this repo is ~112 KB / 15 commits, so a full fetch
+      # costs nothing to rule that out.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Commit if the repository is going stale
+        env:
+          GH_TOKEN: ${{ secrets.LEDOENT_FORK_SYNC_TOKEN }}
+          FORCE: ${{ inputs.force }}
+          # 60 is GitHub's limit. 30 leaves a full month of headroom, so a
+          # couple of missed weekly runs still cannot cross it, and costs
+          # ~12 commits a year rather than 52.
+          THRESHOLD_DAYS: "30"
+        run: |
+          set -euo pipefail
+
+          age_days=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "last commit on ${GITHUB_REF_NAME} is ${age_days}d old (threshold ${THRESHOLD_DAYS}d)"
+
+          if [ "$age_days" -lt "$THRESHOLD_DAYS" ] && [ "$FORCE" != "true" ]; then
+            echo "fresh enough; nothing to do"
+            exit 0
+          fi
+
+          date -u +%Y-%m-%dT%H:%M:%SZ > .github/last-keepalive
+          git add .github/last-keepalive
+
+          # Nothing to commit can only mean the timestamp was identical, i.e.
+          # a second run inside the same second. Treat it as success.
+          if git diff --cached --quiet; then
+            echo "no change to commit"
+            exit 0
+          fi
+
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(ci): keepalive so the schedules aren't disabled [skip ci]"
+
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+              "HEAD:${GITHUB_REF_NAME}"
+          echo "pushed; the 60-day inactivity clock is reset"
