@@ -60,6 +60,13 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          # Without this, checkout leaves an http.extraheader holding the
+          # GITHUB_TOKEN in .git/config, and git prefers it over credentials in
+          # the push URL. The push below then authenticates as
+          # github-actions[bot], which this job's `contents: read` does not
+          # allow: "Permission to ledoent/.github.git denied". Measured, not
+          # theorised -- the first run after merge failed exactly that way.
+          persist-credentials: false
 
       - name: Commit if the repository is going stale
         env:
