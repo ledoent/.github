@@ -160,7 +160,26 @@ forks:
 
   # === non-OCA forks we maintain meaningful branches on ===
   - repo: ledoent/odoo
-    branches: ["18.0"]
+    # 19.0 and 20.0 are the bases the `NN.0-fix-*` branches are cut from for
+    # upstream odoo/odoo PRs. They were unlisted until 2026-10-10 and had
+    # drifted 3810 and 478 commits behind, so every fix branch started on a
+    # stale base and its PR rendered as thousands of unrelated files.
+    #
+    # Deliberately NOT listed: `ledo-base-19.0-*`. Those are frozen bases the
+    # prod image builds from (erp odoo-19/prod/repos.yaml targets
+    # ledo-base-19.0-2026-09-02). Syncing one would move the pin and destroy
+    # the build's reproducibility. They are refreshed by hand, as a new dated
+    # branch, per the erp CLAUDE.md procedure.
+    #
+    # Deliberately NO rebase_globs, unlike ddmrp/OpenUpgrade:
+    #   1. rebase_feature_branches commits as github-actions[bot], which
+    #      rewrites the COMMITTER. Odoo's `legal/cla` gate matches on committer
+    #      email (doc/cla/sign-cla.md says so explicitly), so a nightly rebase
+    #      would fail the CLA check on every open upstream PR.
+    #   2. The 19.0-fix-* branches are merged onto the PINNED ledo-base in
+    #      prod, not onto upstream 19.0. Rebasing them onto a moving 19.0 would
+    #      drag all of upstream into the prod image.
+    branches: ["18.0", "19.0", "20.0"]
     upstream_org: null
     upstream_track: null
     install_forward_port: false
